@@ -6,6 +6,7 @@ import config
 import address
 import building_ledger
 import market_price
+import register
 import risk
 
 
@@ -24,7 +25,7 @@ def _to_float(s):
 st.set_page_config(page_title="사전 위험 진단기", page_icon="🏠", layout="centered")
 st.title("🏠 사전 위험 진단기")
 st.caption("계약 전 매물 위험을 신호등으로 진단합니다")
-st.info("표제부+전유부+시세 연동 단계. 선순위 채권(등기부)은 다음 단계에서 반영됩니다.")
+st.info("표제부 + 전유부 + 시세 + 등기부(선순위 채권) 연동")
 
 deal_type = st.radio("거래유형", config.DEAL_TYPES, horizontal=True)
 keyword = st.text_input("주소 입력", placeholder="예: 인천 서구 가정동 546")
@@ -40,7 +41,7 @@ if st.button("주소 검색", type="primary"):
             st.info("검색 결과가 없습니다.")
         else:
             st.session_state["addr_items"] = result["items"]
-            for k in ["br_all", "expos_cache", "all_trades", "est_price", "expos_area", "bld_nm"]:
+            for k in ["br_all", "expos_cache", "all_trades", "est_price", "expos_area", "bld_nm", "reg"]:
                 st.session_state.pop(k, None)
             st.success(f"{result['total']}건 검색됨")
 
@@ -147,8 +148,35 @@ if items:
 
     est = st.session_state.get("est_price")
     if est:
+        st.divider()
+        st.markdown("**등기부등본 업로드 (선순위 채권 반영)**")
+        st.caption("등기사항전부증명서 PDF(텍스트 본)를 올리면 근저당 채권최고액·위험 표시를 자동 추출합니다.")
+        pdf = st.file_uploader("등기부 PDF", type=["pdf"])
+        if pdf is not None:
+            with st.spinner("등기부 분석 중..."):
+                reg = register.parse_register(pdf)
+            if not reg["ok"]:
+                st.error(reg["error"])
+                st.session_state.pop("reg", None)
+            else:
+                st.session_state["reg"] = reg
+
+        reg = st.session_state.get("reg")
+        senior_default = 0
+        if reg:
+            won_list = reg["geunjeo"]
+            if won_list:
+                st.write("추출된 채권최고액 " + str(len(won_list)) + "건: "
+                         + ", ".join(f"{w:,}원" for w in won_list))
+            else:
+                st.info("근저당 채권최고액을 찾지 못했습니다. 직접 입력하세요.")
+            senior_default = reg["senior_manwon"]
+            if reg["flags"]:
+                st.error("⚠️ 권리 위험 키워드: " + ", ".join(reg["flags"]) + " — 등기부 원본 확인 필수")
+            st.caption("※ 말소된 근저당이 포함됐을 수 있습니다. 유효 채권만 남기고 아래 금액을 조정하세요.")
+
+        senior = st.number_input("선순위 채권 합계(만원)", min_value=0, step=1000, value=int(senior_default))
         deposit = st.number_input("보증금(만원)", min_value=0, step=1000, value=0)
         if deposit > 0:
-            name, level, detail = risk.assess_jeonse_ratio(deposit, est, senior_debt=0)
+            name, level, detail = risk.assess_jeonse_ratio(deposit, est, senior_debt=senior)
             st.write(f"{risk.EMOJI[level]} **{name}** — {detail}")
-            st.caption("※ 선순위 채권(등기부)은 0으로 가정. 다음 단계에서 반영됩니다.")
