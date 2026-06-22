@@ -8,6 +8,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+try:
+    import streamlit as _st
+    for _k, _v in _st.secrets.items():
+        os.environ.setdefault(_k, str(_v))
+except Exception:
+    pass
+
+
 # ===== API 키 =====
 JUSO_API_KEY = os.getenv("JUSO_API_KEY", "")
 BUILDING_LEDGER_API_KEY = os.getenv("BUILDING_LEDGER_API_KEY", "")
