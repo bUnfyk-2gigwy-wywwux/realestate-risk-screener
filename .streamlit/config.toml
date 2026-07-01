@@ -1,0 +1,7 @@
+# 계양부동산 브랜드 표준 컬러 (#1E3A8A 네이비 / #3B82F6 블루)
+[theme]
+primaryColor = "#3B82F6"
+textColor = "#1E3A8A"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#EFF6FF"
+base = "light"
