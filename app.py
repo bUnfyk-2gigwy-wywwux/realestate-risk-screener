@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 
 import streamlit as st
 
@@ -8,6 +9,10 @@ import building_ledger
 import market_price
 import register
 import risk
+
+RESET_KEYS = ["br_all", "expos_cache", "all_trades", "est_price",
+              "expos_area", "bld_nm", "reg", "trade_nm"]
+COMPLEX_FILTER_THRESHOLD = 30   # 단지 수가 이 값을 넘으면 보조 필터 노출
 
 
 def _num_key(s):
@@ -22,32 +27,193 @@ def _to_float(s):
         return None
 
 
+def _reset_downstream():
+    for k in RESET_KEYS:
+        st.session_state.pop(k, None)
+
+
+def _label(i):
+    return i["road_addr"] + (f" ({i['bd_name']})" if i["bd_name"] else "")
+
+
+@st.cache_data
+def _load_bjd():
+    return address.load_bjd()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _trades_cached(sgg_cd, htype, months):
+    return market_price.get_trades(sgg_cd, config.RTMS_API_KEY,
+                                   house_type=htype, months=months)
+
+
 st.set_page_config(page_title="사전 위험 진단기", page_icon="🏠", layout="centered")
 st.title("🏠 사전 위험 진단기")
 st.caption("계약 전 매물 위험을 신호등으로 진단합니다")
 st.info("표제부 + 전유부 + 시세 + 등기부(선순위 채권) 연동")
 
 deal_type = st.radio("거래유형", config.DEAL_TYPES, horizontal=True)
-keyword = st.text_input("주소 입력", placeholder="예: 인천 서구 가정동 546")
-if st.button("주소 검색", type="primary"):
-    if not keyword.strip():
-        st.warning("주소를 입력하세요.")
-    else:
-        with st.spinner("주소 검색 중..."):
-            result = address.search_address(keyword, config.JUSO_API_KEY)
-        if not result["ok"]:
-            st.error(result["error"])
-        elif result["total"] == 0:
-            st.info("검색 결과가 없습니다.")
+
+tab_step, tab_direct = st.tabs(["📍 단계 선택 (공동주택)", "⌨️ 직접 입력"])
+
+# ── 탭 1: 시/도 → 시군구 → 읍면동 → 단지(실거래 추출) 캐스케이드 ──────
+with tab_step:
+    try:
+        bjd = _load_bjd()
+    except FileNotFoundError:
+        bjd = None
+        st.error("bjd_code.csv 파일이 없습니다. 앱 폴더에 배치 후 새로고침하세요.")
+
+    if bjd:
+        sido_list = list(bjd.keys())
+        sido_idx = sido_list.index("인천광역시") if "인천광역시" in sido_list else 0
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            sido = st.selectbox("시/도", sido_list, index=sido_idx)
+        sgg_list = list(bjd[sido].keys())
+        if sgg_list == [""]:                       # 세종 등 시군구 없는 광역
+            sigungu = ""
+            with c2:
+                st.selectbox("시/군/구", ["(해당 없음)"], disabled=True)
         else:
-            st.session_state["addr_items"] = result["items"]
-            for k in ["br_all", "expos_cache", "all_trades", "est_price", "expos_area", "bld_nm", "reg"]:
-                st.session_state.pop(k, None)
-            st.success(f"{result['total']}건 검색됨")
+            sgg_idx = sgg_list.index("계양구") if "계양구" in sgg_list else 0
+            with c2:
+                sigungu = st.selectbox("시/군/구", sgg_list, index=sgg_idx)
+        with c3:
+            emd = st.selectbox("읍/면/동", list(bjd[sido][sigungu].keys()))
+        sgg_cd = bjd[sido][sigungu][emd][:5]
+
+        c4, c5 = st.columns(2)
+        with c4:
+            cx_htype = st.radio("주택유형", list(market_price.ENDPOINTS.keys()),
+                                horizontal=True, key="cx_htype")
+        with c5:
+            cx_months = st.radio("단지 수집 기간(개월)", [12, 24],
+                                 horizontal=True, key="cx_months")
+        st.caption("※ 최근 실거래(매매)가 있는 단지만 표시됩니다. 해당 동에 없으면 시군구 전체로 자동 확장됩니다.")
+
+        if st.button("단지 불러오기", type="primary"):
+            # 행정구역 개편(예: 2026-07 인천 서구→서구·검단구)으로 CSV의 시군구코드가
+            # RTMS와 어긋날 수 있어, juso 라이브 코드를 우선 사용하고 CSV는 폴백으로 둔다.
+            with st.spinner("지역 코드 확인 중..."):
+                rr = address.search_address(
+                    " ".join(x for x in [sido, sigungu, emd] if x),
+                    config.JUSO_API_KEY, per_page=10)
+            live_cd = ""
+            if rr["ok"] and rr["items"]:
+                cds = [i["sigungu_cd"] for i in rr["items"] if i.get("sigungu_cd")]
+                if cds:
+                    live_cd = Counter(cds).most_common(1)[0][0]
+            use_cd = live_cd or sgg_cd
+            with st.spinner(f"{emd} {cx_htype} 실거래 수집 중..."):
+                mp = _trades_cached(use_cd, cx_htype, cx_months)
+            if not mp["ok"]:
+                st.session_state.pop("cx_names", None)
+                st.error(mp["error"])
+            else:
+                all_tr = mp["trades"]
+                emd_tr = [t for t in all_tr if (t.get("법정동") or "").strip() == emd.strip()]
+                emd_names = Counter(t["단지"] for t in emd_tr if t.get("단지")).most_common()
+                all_names = Counter(t["단지"] for t in all_tr if t.get("단지")).most_common()
+                dong_dist = Counter((t.get("법정동") or "(미상)") for t in all_tr).most_common(20)
+                st.session_state["cx_names"] = emd_names
+                st.session_state["cx_all"] = all_names
+                st.session_state["cx_dong_dist"] = dong_dist
+                st.session_state["cx_meta"] = {
+                    "emd": emd, "htype": cx_htype, "months": cx_months,
+                    "sigungu": sigungu, "sido": sido, "total_all": len(all_tr),
+                    "used_cd": use_cd, "csv_cd": sgg_cd,
+                }
+
+        cx_names = st.session_state.get("cx_names")
+        if cx_names is not None:
+            meta = st.session_state.get("cx_meta", {})
+            m_emd = meta.get("emd", "")
+            m_sgg = meta.get("sigungu", "")
+            total_all = meta.get("total_all", 0)
+            used_cd = meta.get("used_cd", "")
+            csv_cd = meta.get("csv_cd", "")
+            code_note = f" · 코드 {used_cd}" if used_cd == csv_cd else f" · 코드 {used_cd}(개편반영, CSV {csv_cd})"
+            st.caption(f"{m_emd} 거래 단지 {len(cx_names)}개 · "
+                       f"{m_sgg} 전체 {total_all}건 "
+                       f"(최근 {meta.get('months',12)}개월 {meta.get('htype','')}{code_note})")
+
+            # 진단: 시군구 내 법정동별 거래 분포
+            with st.expander("거래가 있는 법정동 분포 보기 (진단)"):
+                dist = st.session_state.get("cx_dong_dist", [])
+                if dist:
+                    st.write(" · ".join(f"{d} {c}건" for d, c in dist))
+                else:
+                    st.write("거래 없음")
+
+            # 표시 소스 결정: 해당 동 우선, 0건이면 시군구 전체 폴백
+            use_emd = m_emd
+            source = cx_names
+            fallback = False
+            if not cx_names and total_all > 0:
+                source = st.session_state.get("cx_all", [])
+                use_emd = ""       # 동 무관 검색
+                fallback = True
+                st.warning(f"'{m_emd}' 매매 거래는 0건이지만 {m_sgg} 전체 {total_all}건이 "
+                           f"있습니다. 아래 {m_sgg} 전체 단지에서 선택하세요.")
+
+            if not source:
+                if total_all == 0:
+                    st.info("이 시군구·기간·유형 실거래(매매)가 0건입니다. "
+                            "기간을 24개월로 늘리거나 주택유형을 바꾸거나, '직접 입력' 탭을 이용하세요.")
+                else:
+                    st.info("표시할 단지가 없습니다. '직접 입력' 탭을 이용하세요.")
+            else:
+                shown = source
+                if len(source) > COMPLEX_FILTER_THRESHOLD:
+                    flt = st.text_input("단지명 필터 (부분일치)", key="cx_filter",
+                                        placeholder="예: 루원시티")
+                    if flt.strip():
+                        shown = [c for c in source if flt.strip() in c[0]]
+                if not shown:
+                    st.info("필터와 일치하는 단지가 없습니다.")
+                else:
+                    cx_idx = st.selectbox(
+                        "단지 선택", range(len(shown)),
+                        format_func=lambda i: f"{shown[i][0]} (거래 {shown[i][1]}건)")
+                    if st.button("이 단지로 진단 시작"):
+                        pick = shown[cx_idx][0]
+                        with st.spinner("단지 주소 확정 중..."):
+                            fr = address.find_by_name(m_sgg, use_emd, pick, config.JUSO_API_KEY)
+                        if not fr["ok"]:
+                            st.error(fr["error"])
+                        elif not fr["items"]:
+                            st.warning(f"'{pick}' 주소를 찾지 못했습니다. "
+                                       "'직접 입력' 탭에서 지번으로 검색하세요.")
+                        else:
+                            _reset_downstream()
+                            st.session_state["addr_items"] = fr["items"]
+                            st.session_state["trade_nm"] = pick
+                            tag = " · 시군구 전체 검색" if fallback else ""
+                            st.success(f"선택됨: {pick} — 주소 {len(fr['items'])}건"
+                                       f"{tag} (검색어: {fr['keyword']})")
+
+# ── 탭 2: 기존 키워드 직접 입력 (단독·다가구 등) ─────────────────────
+with tab_direct:
+    keyword = st.text_input("주소 입력", placeholder="예: 인천 서구 가정동 546")
+    if st.button("주소 검색"):
+        if not keyword.strip():
+            st.warning("주소를 입력하세요.")
+        else:
+            with st.spinner("주소 검색 중..."):
+                result = address.search_address(keyword, config.JUSO_API_KEY)
+            if not result["ok"]:
+                st.error(result["error"])
+            elif result["total"] == 0:
+                st.info("검색 결과가 없습니다.")
+            else:
+                _reset_downstream()
+                st.session_state["addr_items"] = result["items"]
+                st.success(f"{result['total']}건 검색됨")
 
 items = st.session_state.get("addr_items")
 if items:
-    labels = [i["road_addr"] + (f" ({i['bd_name']})" if i["bd_name"] else "") for i in items]
+    labels = [_label(i) for i in items]
     idx = st.selectbox("대상 주소 선택", range(len(items)), format_func=lambda i: labels[i])
     chosen = items[idx]
     st.session_state["chosen_addr"] = chosen
@@ -124,7 +290,8 @@ if items:
         if not all_trades:
             st.info("이 시군구·기간·유형에 거래가 없습니다. 주택유형을 바꾸거나 기간을 늘려보세요.")
         else:
-            name_filter = st.text_input("단지명 필터 (부분일치)", value=st.session_state.get("bld_nm", ""))
+            filter_default = st.session_state.get("trade_nm") or st.session_state.get("bld_nm", "")
+            name_filter = st.text_input("단지명 필터 (부분일치)", value=filter_default)
             matched = [t for t in all_trades if name_filter.strip() in t["단지"]] if name_filter.strip() else []
             if name_filter.strip() and not matched:
                 st.info(f"'{name_filter}' 매칭 0건. 아래 전체 목록에서 실제 단지명을 확인하세요.")
