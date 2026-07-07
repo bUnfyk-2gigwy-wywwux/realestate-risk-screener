@@ -47,9 +47,9 @@ def _trades_cached(sgg_cd, htype, months):
                                    house_type=htype, months=months)
 
 
-st.set_page_config(page_title="사전 위험 진단기", page_icon="🏠", layout="centered")
-st.title("🏠 사전 위험 진단기")
-st.caption("계약 전 매물 위험을 신호등으로 진단합니다")
+st.set_page_config(page_title="전세 위험 진단기", page_icon="🏠", layout="centered")
+st.title("🏠 전세 위험 진단기")
+st.caption("전월세·매매 계약 전 매물 위험을 신호등으로 진단합니다")
 st.info("표제부 + 전유부 + 시세 + 등기부(선순위 채권) 연동")
 
 deal_type = st.radio("거래유형", config.DEAL_TYPES, horizontal=True)
@@ -236,11 +236,14 @@ if items:
         sel_dong = st.selectbox("동 선택 (클릭)", dong_opts)
         rec = next((r for r in br_all if r.get("dongNm") == sel_dong), br_all[0])
 
+        # 표시용 "(동 없음)"은 API 파라미터로 보내면 전유부 0건 → 빈 값으로 조회.
+        eff_dong = "" if sel_dong == "(동 없음)" else sel_dong
+
         cache = st.session_state.get("expos_cache", {})
         if sel_dong not in cache:
             with st.spinner(f"{sel_dong} 전유부 조회 중..."):
                 cache[sel_dong] = building_ledger.get_expos_area(
-                    chosen, config.BUILDING_LEDGER_API_KEY, dong=sel_dong)
+                    chosen, config.BUILDING_LEDGER_API_KEY, dong=eff_dong)
             st.session_state["expos_cache"] = cache
         ex = cache.get(sel_dong, {})
 
