@@ -1,4 +1,5 @@
 """실거래가 조회 모듈 (국토교통부). 시군구 단위로 매매 거래를 가져온다."""
+import re
 import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -11,6 +12,13 @@ ENDPOINTS = {
 }
 NAME_TAG = {"아파트": "aptNm", "연립다세대": "mhouseNm"}
 PER_PAGE = 100  # 실거래가 서버는 큰 값에서 500을 내므로 작게 + 페이지 분할
+
+# 에러 메시지 등에 URL이 섞여 나올 때 serviceKey 값을 가린다(라이브 키 노출 방지).
+_KEY_RE = re.compile(r"(serviceKey=)[^&\s]+", re.I)
+
+
+def _mask(text):
+    return _KEY_RE.sub(r"\1***", str(text))
 
 
 def _recent_months(n):
@@ -41,18 +49,18 @@ def get_trades(lawd_cd, service_key, house_type="아파트", months=12):
             try:
                 resp = requests.get(url, params=params, timeout=15)
             except requests.exceptions.RequestException as exc:
-                first_error = first_error or f"요청 실패: {exc}"
+                first_error = first_error or _mask(f"요청 실패: {exc}")
                 break
             try:
                 root = ET.fromstring(resp.content)
             except ET.ParseError:
-                first_error = first_error or (
+                first_error = first_error or _mask(
                     f"HTTP {resp.status_code} · 응답이 XML이 아닙니다. 본문 일부: {resp.text[:300]}")
                 break
             code = (root.findtext(".//resultCode") or root.findtext(".//returnReasonCode") or "").strip()
             msg = (root.findtext(".//resultMsg") or root.findtext(".//returnAuthMsg") or "").strip()
             if code and code not in ("00", "000", "0"):
-                first_error = first_error or f"HTTP {resp.status_code} · [{code}] {msg}"
+                first_error = first_error or _mask(f"HTTP {resp.status_code} · [{code}] {msg}")
                 break
 
             items = root.findall(".//item")

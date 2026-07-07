@@ -1,4 +1,5 @@
 """건축물대장 조회 모듈 (표제부 + 전유공용면적)."""
+import re
 import urllib.parse
 import xml.etree.ElementTree as ET
 
@@ -6,6 +7,14 @@ import requests
 
 BR_TITLE_URL = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
 BR_EXPOS_URL = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrExposPubuseAreaInfo"
+
+# 에러 메시지 등에 URL이 섞여 나올 때 serviceKey 값을 가린다(라이브 키 노출 방지).
+_KEY_RE = re.compile(r"(serviceKey=)[^&\s]+", re.I)
+
+
+def _mask(text):
+    return _KEY_RE.sub(r"\1***", str(text))
+
 
 FIELDS = {
     "bldNm": "건물명", "dongNm": "동명칭", "mainPurpsCdNm": "주용도",
@@ -34,11 +43,11 @@ def _fetch(url, params):
         resp.raise_for_status()
         root = ET.fromstring(resp.content)
     except (requests.exceptions.RequestException, ET.ParseError) as exc:
-        return None, f"조회 실패: {exc}"
+        return None, _mask(f"조회 실패: {exc}")
     code = (root.findtext(".//resultCode") or "").strip()
     if code not in ("00", "0"):
         msg = (root.findtext(".//resultMsg") or "").strip()
-        return None, f"[{code}] {msg}"
+        return None, _mask(f"[{code}] {msg}")
     return root, None
 
 
