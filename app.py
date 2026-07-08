@@ -11,8 +11,13 @@ import register
 import risk
 
 RESET_KEYS = ["br_all", "expos_cache", "all_trades", "est_price",
-              "expos_area", "bld_nm", "reg", "trade_nm"]
+              "expos_area", "bld_nm", "reg", "trade_nm", "ledger_codes", "br_code_note"]
 COMPLEX_FILTER_THRESHOLD = 30   # 단지 수가 이 값을 넘으면 보조 필터 노출
+
+# 행정구역 개편 신·구 시군구코드 상호 매핑 (2026-07 인천 서구 개편).
+# RTMS는 신코드를 쓰지만 건축HUB 등 일부 시스템은 개편 반영이 늦어
+# 구코드로만 조회되는 시차가 있어, 표제부 0건 시 반대 코드로 1회 재시도한다.
+SGG_CODE_FALLBACK = {"28275": "28260", "28260": "28275"}
 
 
 def _num_key(s):
@@ -223,15 +228,34 @@ if items:
     if st.button("건축물대장 조회"):
         with st.spinner("표제부 조회 중..."):
             br = building_ledger.get_title_info(chosen, config.BUILDING_LEDGER_API_KEY)
+            used_codes, code_note = chosen, ""
+            # 개편 시차 폴백: 0건이면 반대(신↔구) 시군구코드로 1회 재시도
+            if br.get("ok") and not br.get("records"):
+                alt_cd = SGG_CODE_FALLBACK.get(chosen.get("sigungu_cd", ""))
+                if alt_cd:
+                    alt = dict(chosen, sigungu_cd=alt_cd)
+                    br2 = building_ledger.get_title_info(alt, config.BUILDING_LEDGER_API_KEY)
+                    if br2.get("ok") and br2.get("records"):
+                        br, used_codes = br2, alt
+                        code_note = f"※ 행정구역 개편 시차로 시군구코드 {alt_cd}(개편 전)로 조회됨"
         if not br["ok"]:
             st.session_state["br_all"] = None
             st.error(br["error"])
+        elif not br["records"]:
+            st.session_state["br_all"] = None
+            st.warning("표제부 기록이 없습니다. 신·구 시군구코드 모두 0건 — "
+                       "지번을 확인하거나 '직접 입력' 탭에서 다른 번지로 시도하세요.")
         else:
             st.session_state["br_all"] = br["records"]
+            st.session_state["ledger_codes"] = used_codes
+            st.session_state["br_code_note"] = code_note
             st.session_state.pop("expos_cache", None)
 
     br_all = st.session_state.get("br_all")
     if br_all:
+        ledger_codes = st.session_state.get("ledger_codes", chosen)
+        if st.session_state.get("br_code_note"):
+            st.caption(st.session_state["br_code_note"])
         dong_opts = sorted({r.get("dongNm", "") for r in br_all if r.get("dongNm")}, key=_num_key) or ["(동 없음)"]
         sel_dong = st.selectbox("동 선택 (클릭)", dong_opts)
         rec = next((r for r in br_all if r.get("dongNm") == sel_dong), br_all[0])
@@ -243,7 +267,7 @@ if items:
         if sel_dong not in cache:
             with st.spinner(f"{sel_dong} 전유부 조회 중..."):
                 cache[sel_dong] = building_ledger.get_expos_area(
-                    chosen, config.BUILDING_LEDGER_API_KEY, dong=eff_dong)
+                    ledger_codes, config.BUILDING_LEDGER_API_KEY, dong=eff_dong)
             st.session_state["expos_cache"] = cache
         ex = cache.get(sel_dong, {})
 
