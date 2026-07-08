@@ -7,6 +7,13 @@
   - load_bjd(): 전국 법정동코드 CSV → {시도: {시군구: {읍면동: 법정동코드10}}}
   - find_by_name(): 읍면동 + 단지명으로 juso 정밀 검색 (단지명 축약 폴백 포함)
 
+개선(2026-07-08):
+  - name_match(): 정규화 양방향 부분일치 (실거래명 "한신그랜드힐" ↔
+    대장/도로명 "한신그랜드힐빌리지"처럼 어느 쪽이 길어도 매칭)
+  - find_by_name(): 시군구 없는 검색어 폴백 추가 — 행정구역 개편으로
+    juso상 구 명칭이 바뀐 경우(예: 인천 서구 분구 개편) "구명 포함" 검색이
+    0건이 되는 문제 대응. 읍면동 일치 필터가 있어 오지역 매칭은 차단됨.
+
 ※ juso API는 지역명 단독 키워드로는 건물을 열거하지 않으므로(실측 1건),
    단지 목록은 실거래가(RTMS)에서 추출하고 juso는 번지 확정에만 사용한다.
 
@@ -77,6 +84,34 @@ def load_bjd(path: str = BJD_CSV) -> dict:
     return tree
 
 
+def _norm(s: str) -> str:
+    """단지명 비교용 정규화: 괄호내용·공백·하이픈·점 제거, 소문자화.
+
+    예) "한신 그랜드힐(1차)" → "한신그랜드힐1차"... 괄호는 내용째 제거되므로
+        "한신그랜드힐". 도로명·대장·실거래 간 표기 편차를 흡수한다.
+    """
+    s = re.sub(r"\(.*?\)", "", s or "")
+    s = re.sub(r"[\s\-–·.']", "", s)
+    return s.lower()
+
+
+def name_match(a: str, b: str, min_len: int = 2) -> bool:
+    """정규화 양방향 부분일치.
+
+    정규화 후 짧은 쪽이 긴 쪽에 포함되면 매칭(방향 무관).
+    예) "한신그랜드힐" ↔ "한신그랜드힐빌리지" → True (어느 쪽이 길어도)
+        "루원" ↔ "루원시티푸르지오" → True
+    오매칭 방지: 짧은 쪽이 min_len(기본 2자) 미만이면 불일치 처리.
+    """
+    na, nb = _norm(a), _norm(b)
+    if not na or not nb:
+        return False
+    short, long_ = (na, nb) if len(na) <= len(nb) else (nb, na)
+    if len(short) < min_len:
+        return False
+    return short in long_
+
+
 def name_variants(name: str, max_variants: int = 5) -> list:
     """실거래 단지명 → juso 검색용 축약 변형 목록.
 
@@ -106,8 +141,12 @@ def find_by_name(sigungu: str, emd: str, name: str, confm_key: str) -> dict:
     """읍면동 + 단지명으로 juso를 검색해 번지 후보를 확정한다.
 
     - 단지명 원형부터 축약 변형 순으로 시도, 첫 매칭에서 중단
+    - 각 변형마다 [시군구+읍면동] → [읍면동만] 두 검색어를 시도
+      (행정구역 개편으로 juso상 구 명칭이 바뀐 경우 대응 —
+       읍면동 일치 필터가 있어 타지역 동명이인 매칭은 차단)
     - 읍면동명 일치 필터 + 공동주택(bdKdcd=1) 우선
-    - 후보가 여럿(같은 단지 복수 번지)이면 전부 반환 → 앱에서 선택
+    - juso 건물명(bdNm)이 요청 단지명과 양방향 매칭되는 후보를 우선 반환
+      (없으면 전체 반환 — 자동 배제 대신 우선순위만 조정)
 
     반환:
         성공 → {"ok": True, "items": [...], "keyword": "사용된 검색어"}
@@ -115,16 +154,22 @@ def find_by_name(sigungu: str, emd: str, name: str, confm_key: str) -> dict:
         미검출 → {"ok": True, "items": [], "keyword": ""}
     """
     last_err = None
+    tried = set()
     for v in name_variants(name):
-        keyword = " ".join(x for x in [sigungu, emd, v] if x)
-        r = search_address(keyword, confm_key, per_page=50)
-        if not r["ok"]:
-            last_err = r["error"]
-            continue
-        matched = [i for i in r["items"] if not emd or not i.get("emd_nm") or i["emd_nm"] == emd]
-        apt = [i for i in matched if i.get("bd_kdcd") == "1"] or matched
-        if apt:
-            return {"ok": True, "items": apt, "keyword": keyword}
+        for parts in ([sigungu, emd, v], [emd, v]):
+            keyword = " ".join(x for x in parts if x)
+            if not keyword or keyword in tried:
+                continue
+            tried.add(keyword)
+            r = search_address(keyword, confm_key, per_page=50)
+            if not r["ok"]:
+                last_err = r["error"]
+                continue
+            matched = [i for i in r["items"] if not emd or not i.get("emd_nm") or i["emd_nm"] == emd]
+            apt = [i for i in matched if i.get("bd_kdcd") == "1"] or matched
+            if apt:
+                named = [i for i in apt if name_match(name, i.get("bd_name", ""))]
+                return {"ok": True, "items": named or apt, "keyword": keyword}
     if last_err:
         return {"ok": False, "error": last_err}
     return {"ok": True, "items": [], "keyword": ""}

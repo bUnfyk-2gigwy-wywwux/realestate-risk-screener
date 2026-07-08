@@ -166,10 +166,10 @@ with tab_step:
             else:
                 shown = source
                 if len(source) > COMPLEX_FILTER_THRESHOLD:
-                    flt = st.text_input("단지명 필터 (부분일치)", key="cx_filter",
+                    flt = st.text_input("단지명 필터 (양방향 부분일치)", key="cx_filter",
                                         placeholder="예: 루원시티")
                     if flt.strip():
-                        shown = [c for c in source if flt.strip() in c[0]]
+                        shown = [c for c in source if address.name_match(flt, c[0])]
                 if not shown:
                     st.info("필터와 일치하는 단지가 없습니다.")
                 else:
@@ -294,8 +294,8 @@ if items:
             st.info("이 시군구·기간·유형에 거래가 없습니다. 주택유형을 바꾸거나 기간을 늘려보세요.")
         else:
             filter_default = st.session_state.get("trade_nm") or st.session_state.get("bld_nm", "")
-            name_filter = st.text_input("단지명 필터 (부분일치)", value=filter_default)
-            matched = [t for t in all_trades if name_filter.strip() in t["단지"]] if name_filter.strip() else []
+            name_filter = st.text_input("단지명 필터 (양방향 부분일치)", value=filter_default)
+            matched = [t for t in all_trades if address.name_match(name_filter, t["단지"])] if name_filter.strip() else []
             if name_filter.strip() and not matched:
                 st.info(f"'{name_filter}' 매칭 0건. 아래 전체 목록에서 실제 단지명을 확인하세요.")
                 st.dataframe(all_trades, use_container_width=True)
