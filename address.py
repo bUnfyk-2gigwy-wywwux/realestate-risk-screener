@@ -84,6 +84,28 @@ def load_bjd(path: str = BJD_CSV) -> dict:
     return tree
 
 
+def bjd_codes_for_emd(emd_nm: str, sido_prefix: str = "", path: str = BJD_CSV) -> list:
+    """법정동 CSV에서 동명이 일치하는 법정동코드 10자리 목록.
+
+    행정구역 개편(구 분할 등)으로 juso가 주는 신코드와 개편 미반영
+    시스템(건축HUB 등)이 요구하는 구코드가 다를 때, CSV(개편 전 코드)를
+    동명으로 역조회해 폴백 후보를 얻는다. sido_prefix(예: "28"=인천)로
+    같은 시도 내 동명이인만 좁힌다.
+    """
+    out = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                code = (row.get("code") or "").strip()
+                if row.get("emd") == emd_nm and code and \
+                        (not sido_prefix or code.startswith(sido_prefix)):
+                    if code not in out:
+                        out.append(code)
+    except OSError:
+        pass
+    return out
+
+
 def _norm(s: str) -> str:
     """단지명 비교용 정규화: 괄호내용·공백·하이픈·점 제거, 소문자화.
 

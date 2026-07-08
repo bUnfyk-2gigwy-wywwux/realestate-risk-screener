@@ -14,10 +14,28 @@ RESET_KEYS = ["br_all", "expos_cache", "all_trades", "est_price",
               "expos_area", "bld_nm", "reg", "trade_nm", "ledger_codes", "br_code_note"]
 COMPLEX_FILTER_THRESHOLD = 30   # 단지 수가 이 값을 넘으면 보조 필터 노출
 
-# 행정구역 개편 신·구 시군구코드 상호 매핑 (2026-07 인천 서구 개편).
+# 행정구역 개편 대응 (2026-07 인천: 서구→서해구·검단구, 중구→제물포구·영종구).
 # RTMS는 신코드를 쓰지만 건축HUB 등 일부 시스템은 개편 반영이 늦어
-# 구코드로만 조회되는 시차가 있어, 표제부 0건 시 반대 코드로 1회 재시도한다.
-SGG_CODE_FALLBACK = {"28275": "28260", "28260": "28275"}
+# 구코드로만 조회되는 시차가 있다. 신코드 조회가 0건이면 아래 후보를 순차 시도:
+#   ① 시군구 5자리만 스왑(동코드 유지) — 확인된 쌍만 등록
+#   ② 법정동 CSV(개편 전 코드)를 동명으로 역조회 — 신설 구 코드를 몰라도 동작
+SGG_CODE_FALLBACK = {"28275": "28260", "28260": "28275"}  # 서구계 확인쌍
+
+
+def _ledger_code_candidates(chosen):
+    """건축물대장 폴백용 (시군구5, 법정동5) 후보 목록 — juso 원코드 제외."""
+    base = (chosen.get("sigungu_cd", ""), chosen.get("bjdong_cd", ""))
+    cands = []
+    alt = SGG_CODE_FALLBACK.get(base[0])
+    if alt:
+        cands.append((alt, base[1]))
+    emd = chosen.get("emd_nm", "")
+    if emd:
+        for code10 in address.bjd_codes_for_emd(emd, (chosen.get("adm_cd") or "")[:2]):
+            pair = (code10[:5], code10[5:10])
+            if pair != base and pair not in cands:
+                cands.append(pair)
+    return cands
 
 
 def _num_key(s):
@@ -229,21 +247,22 @@ if items:
         with st.spinner("표제부 조회 중..."):
             br = building_ledger.get_title_info(chosen, config.BUILDING_LEDGER_API_KEY)
             used_codes, code_note = chosen, ""
-            # 개편 시차 폴백: 0건이면 반대(신↔구) 시군구코드로 1회 재시도
+            # 개편 시차 폴백: 0건이면 개편 전 코드 후보들을 순차 재시도
             if br.get("ok") and not br.get("records"):
-                alt_cd = SGG_CODE_FALLBACK.get(chosen.get("sigungu_cd", ""))
-                if alt_cd:
-                    alt = dict(chosen, sigungu_cd=alt_cd)
+                for sg5, bj5 in _ledger_code_candidates(chosen):
+                    alt = dict(chosen, sigungu_cd=sg5, bjdong_cd=bj5)
                     br2 = building_ledger.get_title_info(alt, config.BUILDING_LEDGER_API_KEY)
                     if br2.get("ok") and br2.get("records"):
                         br, used_codes = br2, alt
-                        code_note = f"※ 행정구역 개편 시차로 시군구코드 {alt_cd}(개편 전)로 조회됨"
+                        code_note = (f"※ 행정구역 개편 시차로 개편 전 법정동코드"
+                                     f"({sg5}-{bj5})로 조회됨")
+                        break
         if not br["ok"]:
             st.session_state["br_all"] = None
             st.error(br["error"])
         elif not br["records"]:
             st.session_state["br_all"] = None
-            st.warning("표제부 기록이 없습니다. 신·구 시군구코드 모두 0건 — "
+            st.warning("표제부 기록이 없습니다. 개편 전·후 코드 후보 모두 0건 — "
                        "지번을 확인하거나 '직접 입력' 탭에서 다른 번지로 시도하세요.")
         else:
             st.session_state["br_all"] = br["records"]
