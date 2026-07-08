@@ -1,3 +1,4 @@
+import os
 import re
 from collections import Counter
 
@@ -71,6 +72,27 @@ def _trades_cached(sgg_cd, htype, months):
 
 
 st.set_page_config(page_title="전세 위험 진단기", page_icon="🏠", layout="centered")
+
+
+# ── 접근 코드 게이트 (opt-in) ─────────────────────────────────────────
+# Cloud Secrets(또는 .env)에 ACCESS_CODE가 설정된 경우에만 잠금.
+# 미설정이면 기존처럼 개방 — 고객용 리드 도구 특성상 잠금은 선택 사항.
+def _access_gate():
+    code = os.getenv("ACCESS_CODE", "")   # config가 st.secrets를 env로 복사함
+    if not code or st.session_state.get("_auth_ok"):
+        return
+    st.title("🔒 접근 코드")
+    pw = st.text_input("접근 코드를 입력하세요", type="password")
+    if st.button("확인", type="primary"):
+        if pw == str(code).strip():
+            st.session_state["_auth_ok"] = True
+            st.rerun()
+        else:
+            st.error("코드가 일치하지 않습니다.")
+    st.stop()
+
+
+_access_gate()
 st.title("🏠 전세 위험 진단기")
 st.caption("전월세·매매 계약 전 매물 위험을 신호등으로 진단합니다")
 st.info("표제부 + 전유부 + 시세 + 등기부(선순위 채권) 연동")
