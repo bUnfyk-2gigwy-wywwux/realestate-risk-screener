@@ -1,4 +1,27 @@
-"""실거래가 조회 모듈 (국토교통부). 시군구 단위로 매매 거래를 가져온다."""
+"""실거래가 조회 모듈 (국토교통부). 시군구 단위로 매매 거래를 가져온다.
+
+담당 도메인
+  체결된 매매 실거래 데이터의 수집과 시세 추정. 호가·심리지표는 다루지
+  않으며, 이 모듈의 산출값은 모두 체결 사실 데이터에서만 나온다.
+
+제공 기능
+  - get_trades(): 시군구코드(LAWD_CD) + 최근 N개월 범위로 매매 거래를 수집.
+    아파트는 RTMSDataSvcAptTradeDev, 연립다세대는 RTMSDataSvcRHTrade를 쓰며
+    단지명 태그가 각각 aptNm / mhouseNm으로 달라 NAME_TAG로 분기한다.
+  - estimate_price(): 거래 목록의 중앙값으로 시세를 추정. area를 주면
+    전용면적 ±area_tol(기본 15%) 이내 거래만 사용한다.
+
+설계 메모
+  - PER_PAGE=100: 실거래가 서버는 numOfRows가 크면 500을 반환하므로 작게
+    잡고 totalCount 기반으로 페이지를 분할한다.
+  - 에러 메시지에 요청 URL이 섞여 나올 수 있어 _mask()로 serviceKey를 가린다.
+  - 표본이 없으면 근사치로 메꾸지 않고 estimate_price()가 None을 돌려준다.
+  - 반환 계약: get_trades()는 실패 시 {"ok": False, "error": ...},
+    성공 시 {"ok": True, "trades": [...], "raw_first": {...}}.
+
+소비처
+  app.py(시세 표시·전세가율 계산). 조회 키는 config.RTMS_API_KEY.
+"""
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
