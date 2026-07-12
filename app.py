@@ -123,7 +123,7 @@ with st.container():
     _consult_cta("top")
     st.divider()
 
-tab_step, tab_direct = st.tabs(["📍 단계 선택 (공동주택)", "⌨️ 직접 입력"])
+tab_step, tab_direct = st.tabs(["📍 단계 선택 (공동주택)", "⌨️ 직접 입력 (단독·다가구)"])
 
 # ── 탭 1: 시/도 → 시군구 → 읍면동 → 단지(실거래 추출) 캐스케이드 ──────
 with tab_step:
