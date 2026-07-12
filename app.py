@@ -320,49 +320,67 @@ if items:
             st.json(ex.get("raw_first", {}))
 
     st.divider()
-    st.subheader("시세 · 깡통전세")
-    htype = st.radio("주택유형(실거래가)", list(market_price.ENDPOINTS.keys()), horizontal=True)
-    months = st.slider("조회 기간(개월)", 3, 24, 12)
+    st.subheader("시세 · 위험진단")
+    # WHY: 단독·다가구는 물건마다 고유해 실거래 유사비교 시세가 부정확하다.
+    # 아파트·연립은 실거래 조회, 단독·다가구는 감정가·공시가 직접 입력으로 분기한다.
+    price_mode = st.radio(
+        "시세 확인 방식",
+        ["실거래가 조회 (아파트·연립다세대)", "직접 입력 (단독·다가구 등)"],
+        horizontal=True, key="price_mode")
 
-    if st.button("실거래가 불러오기"):
-        with st.spinner("실거래가 조회 중..."):
-            mp = market_price.get_trades(chosen["sigungu_cd"], config.RTMS_API_KEY,
-                                         house_type=htype, months=months)
-        st.session_state["all_trades"] = mp["trades"] if mp["ok"] else None
-        st.session_state["trades_error"] = None if mp["ok"] else mp["error"]
-        st.session_state["trades_raw"] = mp.get("raw_first", {}) if mp["ok"] else {}
+    if price_mode.startswith("실거래가"):
+        htype = st.radio("주택유형(실거래가)", list(market_price.ENDPOINTS.keys()), horizontal=True)
+        months = st.slider("조회 기간(개월)", 3, 24, 12)
 
-    if st.session_state.get("trades_error"):
-        st.error(st.session_state["trades_error"])
+        if st.button("실거래가 불러오기"):
+            with st.spinner("실거래가 조회 중..."):
+                mp = market_price.get_trades(chosen["sigungu_cd"], config.RTMS_API_KEY,
+                                             house_type=htype, months=months)
+            st.session_state["all_trades"] = mp["trades"] if mp["ok"] else None
+            st.session_state["trades_error"] = None if mp["ok"] else mp["error"]
+            st.session_state["trades_raw"] = mp.get("raw_first", {}) if mp["ok"] else {}
 
-    all_trades = st.session_state.get("all_trades")
-    if all_trades is not None:
-        st.caption(f"{htype} · 최근 {months}개월 전체 {len(all_trades)}건 조회됨")
-        if not all_trades:
-            st.info("이 시군구·기간·유형에 거래가 없습니다. 주택유형을 바꾸거나 기간을 늘려보세요.")
-        else:
-            filter_default = st.session_state.get("trade_nm") or st.session_state.get("bld_nm", "")
-            name_filter = st.text_input("단지명 필터 (부분일치)", value=filter_default)
-            matched = [t for t in all_trades if name_filter.strip() in t["단지"]] if name_filter.strip() else []
-            if name_filter.strip() and not matched:
-                st.info(f"'{name_filter}' 매칭 0건. 아래 전체 목록에서 실제 단지명을 확인하세요.")
-                st.dataframe(_to_df(all_trades), use_container_width=True)
-            elif matched:
-                st.write(f"매칭 {len(matched)}건")
-                st.dataframe(_to_df(matched), use_container_width=True)
-                area_default = str(st.session_state.get("expos_area", "")) if st.session_state.get("expos_area") else ""
-                area_in = st.text_input("전용면적(㎡, 선택)", value=area_default, placeholder="예: 59.8")
-                est = market_price.estimate_price(matched, area=_to_float(area_in))
-                if est:
-                    st.metric("추정 시세(중앙값)", f"{est:,} 만원")
-                    st.session_state["est_price"] = est
-                else:
-                    st.warning("면적 조건에 맞는 거래가 없습니다. 전용면적을 비우거나 넓혀보세요.")
+        if st.session_state.get("trades_error"):
+            st.error(st.session_state["trades_error"])
+
+        all_trades = st.session_state.get("all_trades")
+        if all_trades is not None:
+            st.caption(f"{htype} · 최근 {months}개월 전체 {len(all_trades)}건 조회됨")
+            if not all_trades:
+                st.info("이 시군구·기간·유형에 거래가 없습니다. 주택유형을 바꾸거나 기간을 늘려보세요.")
             else:
-                st.info("단지명 필터를 입력하면 해당 단지 거래만 추려 시세를 추정합니다.")
-                st.dataframe(_to_df(all_trades), use_container_width=True)
-        with st.expander("원본 응답 항목 보기"):
-            st.json(st.session_state.get("trades_raw", {}))
+                filter_default = st.session_state.get("trade_nm") or st.session_state.get("bld_nm", "")
+                name_filter = st.text_input("단지명 필터 (부분일치)", value=filter_default)
+                matched = [t for t in all_trades if name_filter.strip() in t["단지"]] if name_filter.strip() else []
+                if name_filter.strip() and not matched:
+                    st.info(f"'{name_filter}' 매칭 0건. 아래 전체 목록에서 실제 단지명을 확인하세요.")
+                    st.dataframe(_to_df(all_trades), use_container_width=True)
+                elif matched:
+                    st.write(f"매칭 {len(matched)}건")
+                    st.dataframe(_to_df(matched), use_container_width=True)
+                    area_default = str(st.session_state.get("expos_area", "")) if st.session_state.get("expos_area") else ""
+                    area_in = st.text_input("전용면적(㎡, 선택)", value=area_default, placeholder="예: 59.8")
+                    est_calc = market_price.estimate_price(matched, area=_to_float(area_in))
+                    if est_calc:
+                        st.metric("추정 시세(중앙값)", f"{est_calc:,} 만원")
+                        st.session_state["est_price"] = est_calc
+                    else:
+                        st.warning("면적 조건에 맞는 거래가 없습니다. 전용면적을 비우거나 넓혀보세요.")
+                else:
+                    st.info("단지명 필터를 입력하면 해당 단지 거래만 추려 시세를 추정합니다.")
+                    st.dataframe(_to_df(all_trades), use_container_width=True)
+            with st.expander("원본 응답 항목 보기"):
+                st.json(st.session_state.get("trades_raw", {}))
+    else:
+        st.caption("단독·다가구는 실거래 유사비교가 어렵습니다. "
+                   "감정가·개별주택 공시가격·인근 유사 매매가를 기준으로 시세를 직접 입력하세요.")
+        manual = st.number_input("시세 직접 입력(만원)", min_value=0, step=1000,
+                                 value=int(st.session_state.get("est_price", 0) or 0))
+        if manual > 0:
+            st.session_state["est_price"] = manual
+            st.metric("적용 시세(직접 입력)", f"{manual:,} 만원")
+        else:
+            st.info("시세를 입력하면 아래에서 보증금 대비 위험을 진단합니다.")
 
     est = st.session_state.get("est_price")
     if est:
