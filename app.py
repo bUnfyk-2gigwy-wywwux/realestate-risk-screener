@@ -1,4 +1,3 @@
-import os
 import re
 from collections import Counter
 
@@ -11,32 +10,15 @@ import market_price
 import register
 import risk
 
+# ── 상담 유입(리드) 설정 ─────────────────────────────────────────────
+# 안심전세앱(정부) 대비 포지셔닝: 진단은 정부가, 해석·상담·거래 연결은 계양부동산.
+CONSULT_LANDING = "https://hongskier-99491.waveon.me"  # Waveon 상담폼(8필드)
+CONSULT_KAKAO = "https://pf.kakao.com/_NmKTX/chat"       # 카카오 1:1 상담
+CONSULT_TEL = "010-2769-2799"
+
 RESET_KEYS = ["br_all", "expos_cache", "all_trades", "est_price",
-              "expos_area", "bld_nm", "reg", "trade_nm", "ledger_codes", "br_code_note"]
+              "expos_area", "bld_nm", "reg", "trade_nm"]
 COMPLEX_FILTER_THRESHOLD = 30   # 단지 수가 이 값을 넘으면 보조 필터 노출
-
-# 행정구역 개편 대응 (2026-07 인천: 서구→서해구·검단구, 중구→제물포구·영종구).
-# RTMS는 신코드를 쓰지만 건축HUB 등 일부 시스템은 개편 반영이 늦어
-# 구코드로만 조회되는 시차가 있다. 신코드 조회가 0건이면 아래 후보를 순차 시도:
-#   ① 시군구 5자리만 스왑(동코드 유지) — 확인된 쌍만 등록
-#   ② 법정동 CSV(개편 전 코드)를 동명으로 역조회 — 신설 구 코드를 몰라도 동작
-SGG_CODE_FALLBACK = {"28275": "28260", "28260": "28275"}  # 서구계 확인쌍
-
-
-def _ledger_code_candidates(chosen):
-    """건축물대장 폴백용 (시군구5, 법정동5) 후보 목록 — juso 원코드 제외."""
-    base = (chosen.get("sigungu_cd", ""), chosen.get("bjdong_cd", ""))
-    cands = []
-    alt = SGG_CODE_FALLBACK.get(base[0])
-    if alt:
-        cands.append((alt, base[1]))
-    emd = chosen.get("emd_nm", "")
-    if emd:
-        for code10 in address.bjd_codes_for_emd(emd, (chosen.get("adm_cd") or "")[:2]):
-            pair = (code10[:5], code10[5:10])
-            if pair != base and pair not in cands:
-                cands.append(pair)
-    return cands
 
 
 def _num_key(s):
@@ -71,33 +53,35 @@ def _trades_cached(sgg_cd, htype, months):
                                    house_type=htype, months=months)
 
 
-st.set_page_config(page_title="전세 위험 진단기", page_icon="🏠", layout="centered")
-
-
-# ── 접근 코드 게이트 (opt-in) ─────────────────────────────────────────
-# Cloud Secrets(또는 .env)에 ACCESS_CODE가 설정된 경우에만 잠금.
-# 미설정이면 기존처럼 개방 — 고객용 리드 도구 특성상 잠금은 선택 사항.
-def _access_gate():
-    code = os.getenv("ACCESS_CODE", "")   # config가 st.secrets를 env로 복사함
-    if not code or st.session_state.get("_auth_ok"):
-        return
-    st.title("🔒 접근 코드")
-    pw = st.text_input("접근 코드를 입력하세요", type="password")
-    if st.button("확인", type="primary"):
-        if pw == str(code).strip():
-            st.session_state["_auth_ok"] = True
-            st.rerun()
-        else:
-            st.error("코드가 일치하지 않습니다.")
-    st.stop()
-
-
-_access_gate()
-st.title("🏠 전세 위험 진단기")
-st.caption("전월세·매매 계약 전 매물 위험을 신호등으로 진단합니다")
+st.set_page_config(page_title="사전 위험 진단기", page_icon="🏠", layout="centered")
+st.title("🏠 사전 위험 진단기")
+st.caption("계약 전 매물 위험을 신호등으로 진단합니다")
 st.info("표제부 + 전유부 + 시세 + 등기부(선순위 채권) 연동")
 
 deal_type = st.radio("거래유형", config.DEAL_TYPES, horizontal=True)
+
+# src 유입경로 태깅 (판단기준서 5-5: 유입면 → leads 릴레이)
+src_tag = st.query_params.get("src", "app")
+landing_url = f"{CONSULT_LANDING}?src={src_tag}"
+
+
+def _consult_cta(context: str):
+    """상담 CTA 2버튼(랜딩 폼 + 카카오)을 렌더. context는 src에 부기."""
+    url = f"{CONSULT_LANDING}?src={src_tag}_{context}"
+    b1, b2 = st.columns(2)
+    with b1:
+        st.link_button("🛡️ 무료 안심 상담 신청", url, use_container_width=True)
+    with b2:
+        st.link_button("💬 카카오 1:1 상담", CONSULT_KAKAO, use_container_width=True)
+
+
+# 상단 상시 안내 배너
+with st.container():
+    st.markdown(
+        "🛡️ **안심전세앱에서 '주의·위험'이 나왔거나 계약 전 확인이 필요하신가요?** "
+        "정부 앱은 위험을 알려주고, 실제 계약 가능 여부·안전한 대안은 계양부동산이 함께 봅니다.")
+    _consult_cta("top")
+    st.divider()
 
 tab_step, tab_direct = st.tabs(["📍 단계 선택 (공동주택)", "⌨️ 직접 입력"])
 
@@ -211,10 +195,10 @@ with tab_step:
             else:
                 shown = source
                 if len(source) > COMPLEX_FILTER_THRESHOLD:
-                    flt = st.text_input("단지명 필터 (양방향 부분일치)", key="cx_filter",
+                    flt = st.text_input("단지명 필터 (부분일치)", key="cx_filter",
                                         placeholder="예: 루원시티")
                     if flt.strip():
-                        shown = [c for c in source if address.name_match(flt, c[0])]
+                        shown = [c for c in source if flt.strip() in c[0]]
                 if not shown:
                     st.info("필터와 일치하는 단지가 없습니다.")
                 else:
@@ -268,47 +252,24 @@ if items:
     if st.button("건축물대장 조회"):
         with st.spinner("표제부 조회 중..."):
             br = building_ledger.get_title_info(chosen, config.BUILDING_LEDGER_API_KEY)
-            used_codes, code_note = chosen, ""
-            # 개편 시차 폴백: 0건이면 개편 전 코드 후보들을 순차 재시도
-            if br.get("ok") and not br.get("records"):
-                for sg5, bj5 in _ledger_code_candidates(chosen):
-                    alt = dict(chosen, sigungu_cd=sg5, bjdong_cd=bj5)
-                    br2 = building_ledger.get_title_info(alt, config.BUILDING_LEDGER_API_KEY)
-                    if br2.get("ok") and br2.get("records"):
-                        br, used_codes = br2, alt
-                        code_note = (f"※ 행정구역 개편 시차로 개편 전 법정동코드"
-                                     f"({sg5}-{bj5})로 조회됨")
-                        break
         if not br["ok"]:
             st.session_state["br_all"] = None
             st.error(br["error"])
-        elif not br["records"]:
-            st.session_state["br_all"] = None
-            st.warning("표제부 기록이 없습니다. 개편 전·후 코드 후보 모두 0건 — "
-                       "지번을 확인하거나 '직접 입력' 탭에서 다른 번지로 시도하세요.")
         else:
             st.session_state["br_all"] = br["records"]
-            st.session_state["ledger_codes"] = used_codes
-            st.session_state["br_code_note"] = code_note
             st.session_state.pop("expos_cache", None)
 
     br_all = st.session_state.get("br_all")
     if br_all:
-        ledger_codes = st.session_state.get("ledger_codes", chosen)
-        if st.session_state.get("br_code_note"):
-            st.caption(st.session_state["br_code_note"])
         dong_opts = sorted({r.get("dongNm", "") for r in br_all if r.get("dongNm")}, key=_num_key) or ["(동 없음)"]
         sel_dong = st.selectbox("동 선택 (클릭)", dong_opts)
         rec = next((r for r in br_all if r.get("dongNm") == sel_dong), br_all[0])
-
-        # 표시용 "(동 없음)"은 API 파라미터로 보내면 전유부 0건 → 빈 값으로 조회.
-        eff_dong = "" if sel_dong == "(동 없음)" else sel_dong
 
         cache = st.session_state.get("expos_cache", {})
         if sel_dong not in cache:
             with st.spinner(f"{sel_dong} 전유부 조회 중..."):
                 cache[sel_dong] = building_ledger.get_expos_area(
-                    ledger_codes, config.BUILDING_LEDGER_API_KEY, dong=eff_dong)
+                    chosen, config.BUILDING_LEDGER_API_KEY, dong=sel_dong)
             st.session_state["expos_cache"] = cache
         ex = cache.get(sel_dong, {})
 
@@ -359,8 +320,8 @@ if items:
             st.info("이 시군구·기간·유형에 거래가 없습니다. 주택유형을 바꾸거나 기간을 늘려보세요.")
         else:
             filter_default = st.session_state.get("trade_nm") or st.session_state.get("bld_nm", "")
-            name_filter = st.text_input("단지명 필터 (양방향 부분일치)", value=filter_default)
-            matched = [t for t in all_trades if address.name_match(name_filter, t["단지"])] if name_filter.strip() else []
+            name_filter = st.text_input("단지명 필터 (부분일치)", value=filter_default)
+            matched = [t for t in all_trades if name_filter.strip() in t["단지"]] if name_filter.strip() else []
             if name_filter.strip() and not matched:
                 st.info(f"'{name_filter}' 매칭 0건. 아래 전체 목록에서 실제 단지명을 확인하세요.")
                 st.dataframe(all_trades, use_container_width=True)
@@ -415,3 +376,9 @@ if items:
         if deposit > 0:
             name, level, detail = risk.assess_jeonse_ratio(deposit, est, senior_debt=senior)
             st.write(f"{risk.EMOJI[level]} **{name}** — {detail}")
+            st.divider()
+            st.markdown(
+                "**이 결과가 '주의·위험'이라면** — 선순위·근저당·체납을 반영해 "
+                "실제 계약해도 되는지 사례로 판단하고, 위험하면 안전한 대체 매물과 "
+                "최악의 경우 보증금 회수액(경매)까지 함께 검토해 드립니다.")
+            _consult_cta("result")
