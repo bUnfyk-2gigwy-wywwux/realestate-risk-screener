@@ -10,6 +10,8 @@ import market_price
 import register
 import risk
 
+import pandas as pd
+
 # ── 상담 유입(리드) 설정 ─────────────────────────────────────────────
 # 안심전세앱(정부) 대비 포지셔닝: 진단은 정부가, 해석·상담·거래 연결은 계양부동산.
 CONSULT_LANDING = "https://hongskier-99491.waveon.me"  # Waveon 상담폼(8필드)
@@ -19,6 +21,25 @@ CONSULT_TEL = "010-2769-2799"
 RESET_KEYS = ["br_all", "expos_cache", "all_trades", "est_price",
               "expos_area", "bld_nm", "reg", "trade_nm"]
 COMPLEX_FILTER_THRESHOLD = 30   # 단지 수가 이 값을 넘으면 보조 필터 노출
+
+
+def _to_df(rows, limit=1000):
+    """st.dataframe 안전 변환.
+
+    WHY: 딕셔너리 리스트를 st.dataframe에 직접 넘기면, 혼합타입 object 컬럼을
+    pyarrow가 직렬화하다 대량(연립다세대 등)에서 세그폴트로 앱이 죽는다.
+    pandas로 명시 변환 + 숫자/문자 타입 정규화 + 행수 제한으로 크래시를 차단한다.
+    """
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows[:limit])
+    num_cols = {"거래금액(만원)", "면적(㎡)"}
+    for c in df.columns:
+        if c in num_cols:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        else:
+            df[c] = df[c].astype(str)
+    return df
 
 
 def _num_key(s):
@@ -290,7 +311,7 @@ if items:
             ho_rows = [r for r in ex["rows"] if r["호"] == sel_ho]
             expos_area = round(sum(r["면적(㎡)"] for r in ho_rows if r["구분"] == "전유"), 2)
             st.markdown(f"**전유부** · {sel_ho} 전용면적 **{expos_area} ㎡**")
-            st.dataframe(ho_rows, use_container_width=True)
+            st.dataframe(_to_df(ho_rows), use_container_width=True)
             if expos_area:
                 st.session_state["expos_area"] = expos_area
         else:
@@ -325,10 +346,10 @@ if items:
             matched = [t for t in all_trades if name_filter.strip() in t["단지"]] if name_filter.strip() else []
             if name_filter.strip() and not matched:
                 st.info(f"'{name_filter}' 매칭 0건. 아래 전체 목록에서 실제 단지명을 확인하세요.")
-                st.dataframe(all_trades, use_container_width=True)
+                st.dataframe(_to_df(all_trades), use_container_width=True)
             elif matched:
                 st.write(f"매칭 {len(matched)}건")
-                st.dataframe(matched, use_container_width=True)
+                st.dataframe(_to_df(matched), use_container_width=True)
                 area_default = str(st.session_state.get("expos_area", "")) if st.session_state.get("expos_area") else ""
                 area_in = st.text_input("전용면적(㎡, 선택)", value=area_default, placeholder="예: 59.8")
                 est = market_price.estimate_price(matched, area=_to_float(area_in))
@@ -339,7 +360,7 @@ if items:
                     st.warning("면적 조건에 맞는 거래가 없습니다. 전용면적을 비우거나 넓혀보세요.")
             else:
                 st.info("단지명 필터를 입력하면 해당 단지 거래만 추려 시세를 추정합니다.")
-                st.dataframe(all_trades, use_container_width=True)
+                st.dataframe(_to_df(all_trades), use_container_width=True)
         with st.expander("원본 응답 항목 보기"):
             st.json(st.session_state.get("trades_raw", {}))
 
