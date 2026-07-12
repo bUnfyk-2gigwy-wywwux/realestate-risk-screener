@@ -56,6 +56,7 @@ def _trades_cached(sgg_cd, htype, months):
 st.set_page_config(page_title="사전 위험 진단기", page_icon="🏠", layout="centered")
 st.title("🏠 사전 위험 진단기")
 st.caption("계약 전 매물 위험을 신호등으로 진단합니다")
+st.markdown("🔴 **위험** 🟡 **주의** 🟢 **안전**")
 st.info("표제부 + 전유부 + 시세 + 등기부(선순위 채권) 연동")
 
 deal_type = st.radio("거래유형", config.DEAL_TYPES, horizontal=True)

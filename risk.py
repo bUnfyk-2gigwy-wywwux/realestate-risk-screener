@@ -37,13 +37,17 @@ def assess_building(rec: dict) -> list:
 
 
 def assess_jeonse_ratio(deposit, market, senior_debt=0):
-    """전세가율/부채비율 신호. 단위: 만원."""
+    """전세가율/부채비율 신호. 단위: 만원.
+
+    WHY: 판정 결과가 안전(녹색)인데도 항목명이 항상 '깡통전세'로 표시되면
+    부정적 인상을 준다. level별로 라벨을 분기해 안전 시 '깡통전세' 단어를 제거한다.
+    """
     if not market or market <= 0:
-        return ("깡통전세", "gray", "시세 추정 불가 · 실거래가 확인 필요")
+        return ("전세가율 판정 불가", "gray", "시세 추정 불가 · 실거래가 확인 필요")
     ratio = (deposit + senior_debt) / market * 100
     detail = f"(보증금 {deposit:,} + 선순위 {senior_debt:,}) / 시세 {market:,} = {ratio:.0f}%"
     if ratio < 70:
-        return ("깡통전세", "green", f"부채비율 {ratio:.0f}% 안전 · {detail}")
+        return ("전세가율 안전", "green", f"부채비율 {ratio:.0f}% 안전 · {detail}")
     if ratio < 85:
-        return ("깡통전세", "yellow", f"부채비율 {ratio:.0f}% 주의 · {detail}")
-    return ("깡통전세", "red", f"부채비율 {ratio:.0f}% 위험 · {detail}")
+        return ("전세가율 주의", "yellow", f"부채비율 {ratio:.0f}% 주의 · {detail}")
+    return ("깡통전세 위험", "red", f"부채비율 {ratio:.0f}% 위험 · {detail}")
