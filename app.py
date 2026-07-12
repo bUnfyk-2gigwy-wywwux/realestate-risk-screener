@@ -19,8 +19,10 @@ CONSULT_KAKAO = "https://pf.kakao.com/_NmKTX/chat"       # 카카오 1:1 상담
 CONSULT_TEL = "010-2769-2799"
 
 RESET_KEYS = ["br_all", "expos_cache", "all_trades", "est_price",
-              "expos_area", "bld_nm", "reg", "trade_nm"]
+              "expos_area", "bld_nm", "reg", "trade_nm",
+              "trades_raw", "trades_error"]
 COMPLEX_FILTER_THRESHOLD = 30   # 단지 수가 이 값을 넘으면 보조 필터 노출
+TRADES_CAP = 5000               # 세션에 담는 실거래 최대 건수(메모리 누적 방지)
 
 
 def _to_df(rows, limit=1000):
@@ -68,7 +70,7 @@ def _load_bjd():
     return address.load_bjd()
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False, max_entries=8)
 def _trades_cached(sgg_cd, htype, months):
     return market_price.get_trades(sgg_cd, config.RTMS_API_KEY,
                                    house_type=htype, months=months)
@@ -334,9 +336,9 @@ if items:
 
         if st.button("실거래가 불러오기"):
             with st.spinner("실거래가 조회 중..."):
-                mp = market_price.get_trades(chosen["sigungu_cd"], config.RTMS_API_KEY,
-                                             house_type=htype, months=months)
-            st.session_state["all_trades"] = mp["trades"] if mp["ok"] else None
+                mp = _trades_cached(chosen["sigungu_cd"], htype, months)
+            # 세션엔 상한까지만 담아 메모리 누적을 막는다(필터·추정엔 충분).
+            st.session_state["all_trades"] = mp["trades"][:TRADES_CAP] if mp["ok"] else None
             st.session_state["trades_error"] = None if mp["ok"] else mp["error"]
             st.session_state["trades_raw"] = mp.get("raw_first", {}) if mp["ok"] else {}
 
