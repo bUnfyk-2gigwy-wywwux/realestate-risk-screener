@@ -13,5 +13,5 @@ jobs:
     steps:
       - name: Ping app to keep it awake
         run: |
-          code=$(curl -sL -m 60 -o /dev/null -w "%{http_code}" https://sajeon-jindan.streamlit.app/)
+          code=$(curl -s -m 60 -o /dev/null -w "%{http_code}" https://sajeon-jindan.streamlit.app/ || true)
           echo "ping http=$code"
