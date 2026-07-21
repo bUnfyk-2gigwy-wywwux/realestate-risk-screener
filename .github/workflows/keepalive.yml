@@ -1,0 +1,17 @@
+name: keepalive
+
+# 전세 진단기(sajeon-jindan) 슬립 방지 — 클라우드에서 24시간 실행(맥 무관)
+# cron은 UTC 기준 → KST(UTC+9)로 8·12·16·20시에 접속
+on:
+  schedule:
+    - cron: '0 23,3,7,11 * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping app to keep it awake
+        run: |
+          code=$(curl -sL -m 60 -o /dev/null -w "%{http_code}" https://sajeon-jindan.streamlit.app/)
+          echo "ping http=$code"
